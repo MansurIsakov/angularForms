@@ -28,8 +28,15 @@
       >Dynamic Forms</a
     >
   </div>
-  <input
+  <!-- <input
     [(ngModel)]="searchString"
+    (ngModelChange)="findSome($event)"
+    class="global-search"
+    placeholder="Global Search"
+    type="text"
+  /> -->
+  <input
+    [formControl]="reactiveSearchString"
     class="global-search"
     placeholder="Global Search"
     type="text"
