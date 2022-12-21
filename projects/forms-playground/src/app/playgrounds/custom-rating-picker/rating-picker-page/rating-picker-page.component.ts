@@ -8,8 +8,7 @@ import {
   CUSTOM_ELEMENTS_SCHEMA,
   OnInit,
 } from '@angular/core';
-import { RatingPickerComponent } from 'projects/custom-form-controls/src/lib/rating-picker/rating-picker.component';
-import { RatingOptions } from 'dist/custom-form-controls/lib/rating-picker/rating-picker.component';
+import { RatingOptions, RatingPickerComponent } from 'custom-form-controls';
 
 interface Rating {
   reviewText: string;
