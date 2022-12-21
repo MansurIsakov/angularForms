@@ -8,19 +8,32 @@ import {
   CUSTOM_ELEMENTS_SCHEMA,
   OnInit,
 } from '@angular/core';
+import { RatingPickerComponent } from 'projects/custom-form-controls/src/lib/rating-picker/rating-picker.component';
+import { RatingOptions } from 'dist/custom-form-controls/lib/rating-picker/rating-picker.component';
+
+interface Rating {
+  reviewText: string;
+  reviewRating: RatingOptions;
+}
 
 @Component({
   selector: 'app-rating-picker-page',
   standalone: true,
-  imports: [CommonModule, ReactiveFormsModule, EditableContentValueAccessor],
+  imports: [
+    CommonModule,
+    ReactiveFormsModule,
+    EditableContentValueAccessor,
+    RatingPickerComponent,
+  ],
   templateUrl: './rating-picker-page.component.html',
   styleUrls: ['../../common-page.scss', './rating-picker-page.component.scss'],
   schemas: [CUSTOM_ELEMENTS_SCHEMA],
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class RatingPickerPageComponent implements OnInit {
-  form = this.fb.group({
+  form = this.fb.group<Rating>({
     reviewText: '',
+    reviewRating: null,
   });
   constructor(private fb: FormBuilder) {}
   ngOnInit(): void {}
