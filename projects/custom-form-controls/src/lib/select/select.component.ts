@@ -6,18 +6,27 @@ import {
   animate,
   AnimationEvent,
 } from '@angular/animations';
+import { SelectionModel } from '@angular/cdk/collections';
+import { coerceBooleanProperty } from '@angular/cdk/coercion';
 import {
   AfterContentInit,
+  Attribute,
+  ChangeDetectionStrategy,
   Component,
   ContentChildren,
   EventEmitter,
   HostListener,
   Input,
-  OnInit,
+  OnChanges,
+  OnDestroy,
   Output,
   QueryList,
+  SimpleChanges,
 } from '@angular/core';
-import { OptionComponent } from 'custom-form-controls';
+import { merge, startWith, Subject, switchMap, takeUntil, tap } from 'rxjs';
+import { OptionComponent } from './option/option.component';
+
+export type SelectValue<T> = T | T[] | null;
 
 @Component({
   selector: 'cfc-select',
@@ -35,18 +44,55 @@ import { OptionComponent } from 'custom-form-controls';
       ]),
     ]),
   ],
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
-export class SelectComponent implements AfterContentInit {
+export class SelectComponent<T>
+  implements OnChanges, AfterContentInit, OnDestroy
+{
   @Input()
   label = '';
 
   @Input()
-  value: string | null = null;
+  displayWith: ((value: T) => string | number) | null = null;
+
+  @Input()
+  compareWith: (v1: T | null, v2: T | null) => boolean = (v1, v2) => v1 === v2;
+
+  @Input()
+  set value(value: SelectValue<T>) {
+    this.selectionModel.clear();
+    if (value) {
+      if (Array.isArray(value)) {
+        this.selectionModel.select(...value);
+      } else {
+        this.selectionModel.select(value);
+      }
+    }
+  }
+  get value() {
+    if (this.selectionModel.isEmpty()) {
+      return null;
+    }
+
+    if (this.selectionModel.isMultipleSelection()) {
+      return this.selectionModel.selected;
+    }
+
+    return this.selectionModel.selected[0];
+  }
+
+  private selectionModel = new SelectionModel<T>(
+    coerceBooleanProperty(this.multiple)
+  );
 
   @Output()
   readonly opened = new EventEmitter<void>();
+
   @Output()
   readonly closed = new EventEmitter<void>();
+
+  @Output()
+  readonly selectionChanged = new EventEmitter<SelectValue<T>>();
 
   @HostListener('click')
   open() {
@@ -58,14 +104,52 @@ export class SelectComponent implements AfterContentInit {
   }
 
   @ContentChildren(OptionComponent, { descendants: true })
-  options!: QueryList<OptionComponent>;
+  options!: QueryList<OptionComponent<T>>;
 
   isOpen = false;
 
-  constructor() {}
+  protected get displayValue() {
+    if (this.displayWith && this.value) {
+      if (Array.isArray(this.value)) {
+        return this.value.map(this.displayWith);
+      }
+      return this.displayWith(this.value);
+    }
+
+    return this.value;
+  }
+
+  private optionMap = new Map<T | null, OptionComponent<T>>();
+
+  private unsubscribe$ = new Subject<void>();
+
+  constructor(@Attribute('multiple') private multiple: string) {}
+
+  ngOnChanges(changes: SimpleChanges): void {
+    if (changes['compareWith']) {
+      this.selectionModel.compareWith = changes['compareWith'].currentValue;
+      this.higlightSelectedOptions();
+    }
+  }
 
   ngAfterContentInit(): void {
-    this.higlightSelectedOptions(this.value);
+    this.selectionModel.changed
+      .pipe(takeUntil(this.unsubscribe$))
+      .subscribe((values) => {
+        values.removed.forEach((rv) => this.optionMap.get(rv)?.deselect());
+        values.added.forEach((av) =>
+          this.optionMap.get(av)?.highlightAsSelected()
+        );
+      });
+    this.options.changes
+      .pipe(
+        startWith<QueryList<OptionComponent<T>>>(this.options),
+        tap(() => this.refreshOptionsMap()),
+        tap(() => queueMicrotask(() => this.higlightSelectedOptions())),
+        switchMap((options) => merge(...options.map((o) => o.selected))),
+        takeUntil(this.unsubscribe$)
+      )
+      .subscribe((selectedOption) => this.handleSelection(selectedOption));
   }
 
   onPanelAnimationDone({ fromState, toState }: AnimationEvent) {
@@ -78,11 +162,44 @@ export class SelectComponent implements AfterContentInit {
     }
   }
 
-  private higlightSelectedOptions(value: string | null) {
-    // this.findOptionsByValue(value)?.highlightAsSelected();
+  private refreshOptionsMap() {
+    this.optionMap.clear();
+    this.options.forEach((o) => this.optionMap.set(o.value, o));
   }
 
-  private findOptionsByValue(value: string | null) {
-    return this.options && this.options.find((o) => o.value === value);
+  private handleSelection(option: OptionComponent<T>) {
+    if (option.value) {
+      this.selectionModel.toggle(option.value);
+      this.selectionChanged.emit(this.value);
+    }
+    if (!this.selectionModel.isMultipleSelection()) {
+      this.close();
+    }
+  }
+
+  private higlightSelectedOptions() {
+    const valuesWithUpdateReferences = this.selectionModel.selected.map(
+      (value) => {
+        const correspondingOption = this.findOptionsByValue(value);
+        return correspondingOption ? correspondingOption.value! : value;
+      }
+    );
+    this.selectionModel.clear();
+    this.selectionModel.select(...valuesWithUpdateReferences);
+  }
+
+  private findOptionsByValue(value: T | null) {
+    if (this.optionMap.has(value)) {
+      return this.optionMap.get(value);
+    }
+
+    return (
+      this.options && this.options.find((o) => this.compareWith(o.value, value))
+    );
+  }
+
+  ngOnDestroy(): void {
+    this.unsubscribe$.next();
+    this.unsubscribe$.complete();
   }
 }

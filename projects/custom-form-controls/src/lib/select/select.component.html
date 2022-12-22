@@ -3,7 +3,7 @@
 </div>
 <div class="control" cdkOverlayOrigin #origin="cdkOverlayOrigin">
   <span class="selected-value" [ngClass]="{ empty: !value }">
-    {{ value || "Nothing is selected..." }}
+    {{ displayValue || "Nothing is selected..." }}
   </span>
   <span class="drop-down-icon">👇</span>
 </div>

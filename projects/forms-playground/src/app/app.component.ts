@@ -10,7 +10,7 @@ import { HeaderComponent } from './core/header/header.component';
   styleUrls: ['./app.component.scss'],
   standalone: true,
   imports: [RouterModule, HeaderComponent, FooterComponent],
-  changeDetection: ChangeDetectionStrategy.OnPush
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class AppComponent {
   constructor(public title: Title) {}

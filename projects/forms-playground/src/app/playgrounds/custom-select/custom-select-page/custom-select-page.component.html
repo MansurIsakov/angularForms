@@ -1,7 +1,12 @@
-<cfc-select value="mansur" label="Pick the User">
-  <cfc-option value="mansur">Mansur</cfc-option>
-  <cfc-option value="nomon">Nomon</cfc-option>
-  <cfc-option value="aziz" [disabled]="true" disabledReason="Bad guy">
-    Aziz
+<cfc-select
+  label="Pick the User"
+  multiple
+  [compareWith]="compareWithFn"
+  [displayWith]="displayWithFn"
+  [value]="selectValue"
+  (selectionChanged)="onSelectionChanged($event)"
+>
+  <cfc-option *ngFor="let user of users" [value]="user">
+    {{ user.name }}
   </cfc-option>
 </cfc-select>
