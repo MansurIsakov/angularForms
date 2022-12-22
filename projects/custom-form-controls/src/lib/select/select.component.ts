@@ -12,9 +12,12 @@ import {
   AfterContentInit,
   Attribute,
   ChangeDetectionStrategy,
+  ChangeDetectorRef,
   Component,
   ContentChildren,
+  ElementRef,
   EventEmitter,
+  HostBinding,
   HostListener,
   Input,
   OnChanges,
@@ -22,9 +25,12 @@ import {
   Output,
   QueryList,
   SimpleChanges,
+  ViewChild,
 } from '@angular/core';
+import { ActiveDescendantKeyManager } from '@angular/cdk/a11y';
 import { merge, startWith, Subject, switchMap, takeUntil, tap } from 'rxjs';
 import { OptionComponent } from './option/option.component';
+import { ControlValueAccessor, NG_VALUE_ACCESSOR } from '@angular/forms';
 
 export type SelectValue<T> = T | T[] | null;
 
@@ -44,13 +50,27 @@ export type SelectValue<T> = T | T[] | null;
       ]),
     ]),
   ],
+  providers: [
+    {
+      provide: NG_VALUE_ACCESSOR,
+      useExisting: SelectComponent,
+      multi: true,
+    },
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class SelectComponent<T>
-  implements OnChanges, AfterContentInit, OnDestroy
+  implements OnChanges, AfterContentInit, OnDestroy, ControlValueAccessor
 {
   @Input()
   label = '';
+
+  @Input()
+  searchable = false;
+
+  @Input()
+  @HostBinding('class.disabled')
+  disabled = false;
 
   @Input()
   displayWith: ((value: T) => string | number) | null = null;
@@ -60,15 +80,11 @@ export class SelectComponent<T>
 
   @Input()
   set value(value: SelectValue<T>) {
-    this.selectionModel.clear();
-    if (value) {
-      if (Array.isArray(value)) {
-        this.selectionModel.select(...value);
-      } else {
-        this.selectionModel.select(value);
-      }
-    }
+    this.setupValue(value);
+    this.onChange(value);
+    this.higlightSelectedOptions();
   }
+
   get value() {
     if (this.selectionModel.isEmpty()) {
       return null;
@@ -92,21 +108,66 @@ export class SelectComponent<T>
   readonly closed = new EventEmitter<void>();
 
   @Output()
+  readonly searchChanged = new EventEmitter<string>();
+
+  @Output()
   readonly selectionChanged = new EventEmitter<SelectValue<T>>();
+
+  @HostListener('blur')
+  markAsTouched() {
+    if (!this.disabled && !this.isOpen) {
+      this.onTouched();
+      this.cd.markForCheck();
+    }
+  }
 
   @HostListener('click')
   open() {
+    if (this.disabled) return;
     this.isOpen = true;
+    if (this.searchable) {
+      setTimeout(() => {
+        this.searchInputEl.nativeElement.focus();
+      }, 0);
+    }
+    this.cd.markForCheck();
   }
 
   close() {
     this.isOpen = false;
+    this.onTouched();
+    this.hostEl.nativeElement.focus();
+    this.cd.markForCheck();
+  }
+
+  @HostListener('keydown', ['$event'])
+  protected onKeyDown(e: KeyboardEvent) {
+    if (e.key === 'ArrowDown' && !this.isOpen) {
+      this.open();
+      return;
+    }
+
+    if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && this.isOpen) {
+      this.listKeyManager.onKeydown(e);
+    }
+
+    if (e.key === 'Enter' && this.isOpen && this.listKeyManager.activeItem) {
+      this.handleSelection(this.listKeyManager.activeItem);
+    }
   }
 
   @ContentChildren(OptionComponent, { descendants: true })
   options!: QueryList<OptionComponent<T>>;
 
+  @ViewChild('input')
+  searchInputEl!: ElementRef<HTMLInputElement>;
+
+  @HostBinding('class.select-panel-open')
   isOpen = false;
+
+  @HostBinding('attr.tabIndex')
+  @Input()
+  tabIndex = 0;
 
   protected get displayValue() {
     if (this.displayWith && this.value) {
@@ -119,11 +180,36 @@ export class SelectComponent<T>
     return this.value;
   }
 
+  protected onChange: (newValue: SelectValue<T>) => void = () => {};
+  protected onTouched: () => void = () => {};
+
   private optionMap = new Map<T | null, OptionComponent<T>>();
 
   private unsubscribe$ = new Subject<void>();
+  private listKeyManager!: ActiveDescendantKeyManager<OptionComponent<T>>;
 
-  constructor(@Attribute('multiple') private multiple: string) {}
+  constructor(
+    @Attribute('multiple') private multiple: string,
+    private cd: ChangeDetectorRef,
+    private hostEl: ElementRef
+  ) {}
+
+  // Custom Value Accessors
+  writeValue(value: SelectValue<T>): void {
+    this.setupValue(value);
+    this.higlightSelectedOptions();
+    this.cd.markForCheck();
+  }
+  registerOnChange(fn: any): void {
+    this.onChange = fn;
+  }
+  registerOnTouched(fn: any): void {
+    this.onTouched = fn;
+  }
+  setDisabledState?(isDisabled: boolean): void {
+    this.disabled = isDisabled;
+    this.cd.markForCheck();
+  }
 
   ngOnChanges(changes: SimpleChanges): void {
     if (changes['compareWith']) {
@@ -133,6 +219,17 @@ export class SelectComponent<T>
   }
 
   ngAfterContentInit(): void {
+    this.listKeyManager = new ActiveDescendantKeyManager(
+      this.options
+    ).withWrap();
+    this.listKeyManager.change
+      .pipe(takeUntil(this.unsubscribe$))
+      .subscribe((itemIndex) => {
+        this.options.get(itemIndex)?.scrollIntoView({
+          behavior: 'smooth',
+          block: 'center',
+        });
+      });
     this.selectionModel.changed
       .pipe(takeUntil(this.unsubscribe$))
       .subscribe((values) => {
@@ -152,7 +249,7 @@ export class SelectComponent<T>
       .subscribe((selectedOption) => this.handleSelection(selectedOption));
   }
 
-  onPanelAnimationDone({ fromState, toState }: AnimationEvent) {
+  protected onPanelAnimationDone({ fromState, toState }: AnimationEvent) {
     if (fromState === 'void' && toState === null && this.isOpen) {
       this.opened.emit();
     }
@@ -167,10 +264,28 @@ export class SelectComponent<T>
     this.options.forEach((o) => this.optionMap.set(o.value, o));
   }
 
+  protected onHandleInput(e: Event) {
+    this.searchChanged.emit((e.target as HTMLInputElement).value);
+  }
+
+  private setupValue(value: SelectValue<T>) {
+    this.selectionModel.clear();
+    if (value) {
+      if (Array.isArray(value)) {
+        this.selectionModel.select(...value);
+      } else {
+        this.selectionModel.select(value);
+      }
+    }
+  }
+
   private handleSelection(option: OptionComponent<T>) {
+    if (this.disabled) return;
+
     if (option.value) {
       this.selectionModel.toggle(option.value);
       this.selectionChanged.emit(this.value);
+      this.onChange(this.value);
     }
     if (!this.selectionModel.isMultipleSelection()) {
       this.close();
@@ -196,6 +311,15 @@ export class SelectComponent<T>
     return (
       this.options && this.options.find((o) => this.compareWith(o.value, value))
     );
+  }
+
+  clearSelection(e?: Event) {
+    e?.stopPropagation();
+    if (this.disabled) return;
+    this.selectionModel.clear();
+    this.selectionChanged.emit(this.value);
+    this.onChange(this.value);
+    this.cd.markForCheck();
   }
 
   ngOnDestroy(): void {
